@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+requests
+beautifulsoup4
+supabase
+python-multipart
+pydantic
+pydantic-settings
+flask==3.0.0
+flask-cors==4.0.0
+requests==2.31.0
+python-dotenv==1.0.0
+gunicorn==21.2.0
