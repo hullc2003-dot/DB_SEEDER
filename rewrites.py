@@ -112,10 +112,10 @@ async def process_text_into_packages(text: str) -> tuple:
             word_count = len(chunk.split())
 
             suggested_table = await classify_section(chunk)
-            await asyncio.sleep(100.0)
+            await asyncio.sleep(15.0)
 
             title = await generate_title(chunk)
-            await asyncio.sleep(100.0)
+            await asyncio.sleep(15.0)
 
             package = {
                 "title": title,
