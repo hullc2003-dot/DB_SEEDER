@@ -10,3 +10,5 @@ google-genai
 scikit-learn
 joblib
 numpy
+sentence-transformers
+torch
