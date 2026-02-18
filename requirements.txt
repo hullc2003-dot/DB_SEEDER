@@ -1,10 +1,9 @@
 requests
 beautifulsoup4
-supabase==2.3.0
-openai
+supabase==2.7.4
+groq
 python-dotenv
 fastapi
 uvicorn
 pydantic
-google-genai
-groq
+google-generativeai
