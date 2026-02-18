@@ -90,6 +90,20 @@ async def wake_up():
     """Keeps Render instance from sleeping."""
     return {"status": "awake", "message": "Backend session refreshed."}
 
+@app.get("/check-env")
+async def check_env():
+    """Temporary env var checker — remove before going to production."""
+    import os
+    return {
+        "SUPABASE_URL": "set" if os.getenv("SUPABASE_URL") else "MISSING",
+        "SUPABASE_KEY": "set" if os.getenv("SUPABASE_KEY") else "MISSING",
+        "SUPABASE_SERVICE_ROLE_KEY": "set" if os.getenv("SUPABASE_SERVICE_ROLE_KEY") else "MISSING",
+        "GROQ_API_KEY": "set" if os.getenv("GROQ_API_KEY") else "MISSING",
+        "GEMINI_API_KEY": "set" if os.getenv("GEMINI_API_KEY") else "MISSING",
+        "ALLOWED_ORIGIN": "set" if os.getenv("ALLOWED_ORIGIN") else "MISSING",
+    }
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     """
