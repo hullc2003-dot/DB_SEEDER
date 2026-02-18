@@ -16,21 +16,21 @@ logger.setLevel(logging.INFO)
 
 # Optional: restrict which tables can be written to (prevent accidental injection)
 _ALLOWED_TABLES: Sequence[str] = (
-    "website_builder_mastery_junk",
-    "seo_junk",
-    "psychology_empathy_junk",
-    "website_types_junk",
-    "analytics_junk",
-    "content_design_junk",
-    "multimodal_visual_search_junk",
-    "ai_prompt_engineering_junk",
-    "code_skills_junk",
-    "schema_skills_junk",
-    "meta_skills_junk",
-    "backlinks_junk",
-    "social_media_junk",
-    "master_strategy_junk",
-    "critical_thinking_junk",
+    "website_builder_mastery",
+    "seo",
+    "psychology_empathy",
+    "website_types",
+    "analytics",
+    "content_design",
+    "multimodal_visual_search",
+    "ai_prompt_engineering",
+    "code_skills",
+    "schema_skills",
+    "meta_skills",
+    "backlinks",
+    "social_media",
+    "master_strategy",
+    "critical_thinking",
 )
 
 # Import the centralized supabase client factory/wrapper you added
