@@ -19,14 +19,11 @@ logger = logging.getLogger("Rewrites")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MODEL = "meta-llama/llama-3-70b-instruct"
 
-CHUNK_SIZE = 800       # Target words per chunk
-CHUNK_OVERLAP = 50     # Words of overlap between chunks for context continuity
+CHUNK_SIZE = 800
+CHUNK_OVERLAP = 50
 
 if not OPENROUTER_API_KEY:
-    raise RuntimeError(
-        "OPENROUTER_API_KEY environment variable not set. "
-        "Get your key from https://openrouter.ai/keys"
-    )
+    raise RuntimeError("OPENROUTER_API_KEY environment variable not set.")
 
 client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
@@ -34,13 +31,7 @@ client = AsyncOpenAI(
 )
 
 def chunk_text(text: str) -> list:
-    """
-    Split text into ~800 word chunks by word count, not by headings.
-    Tries to split on sentence boundaries for cleaner chunks.
-    """
-    # Clean up whitespace
     text = re.sub(r'\n{3,}', '\n\n', text.strip())
-
     words = text.split()
     if not words:
         return []
@@ -51,23 +42,17 @@ def chunk_text(text: str) -> list:
     while start < len(words):
         end = min(start + CHUNK_SIZE, len(words))
 
-        # Try to end on a sentence boundary within the last 100 words
         if end < len(words):
             chunk_words = words[start:end]
             chunk_text_str = ' '.join(chunk_words)
-
-            # Find last sentence-ending punctuation in the final 100 words
             last_sentence = max(
                 chunk_text_str.rfind('. ', len(chunk_text_str) - 600),
                 chunk_text_str.rfind('! ', len(chunk_text_str) - 600),
                 chunk_text_str.rfind('? ', len(chunk_text_str) - 600),
             )
-
             if last_sentence > 0:
-                # Trim to sentence boundary
                 trimmed = chunk_text_str[:last_sentence + 1].strip()
                 chunks.append(trimmed)
-                # Count words in trimmed chunk to set next start
                 trimmed_word_count = len(trimmed.split())
                 start = start + trimmed_word_count - CHUNK_OVERLAP
             else:
@@ -77,17 +62,34 @@ def chunk_text(text: str) -> list:
             chunks.append(' '.join(words[start:end]))
             break
 
-        # Safety: prevent infinite loop
         if start <= 0:
             break
 
     return [c for c in chunks if len(c.split()) >= 50]
 
+async def generate_title(text: str) -> str:
+    prompt = (
+        "Generate a concise, specific title for this content.\n"
+        "Rules:\n"
+        "- Maximum 8 words\n"
+        "- No quotes or punctuation at the end\n"
+        "- Be specific to the actual topic, not generic\n"
+        "- Return ONLY the title, nothing else\n\n"
+        f"Content (first 400 chars):\n{text[:400]}"
+    )
+    try:
+        response = await client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=25,
+            temperature=0.3
+        )
+        return response.choices[0].message.content.strip().strip('"').strip("'")
+    except Exception as e:
+        logger.error(f"Title generation failed: {e}")
+        return "Untitled"
+
 async def process_text_into_packages(text: str) -> tuple:
-    """
-    Main pipeline: chunk raw text and classify each chunk.
-    No summarization — all original content is preserved.
-    """
     if not text.strip():
         logger.warning("process_text_into_packages called with empty text")
         return [], 0
@@ -108,10 +110,15 @@ async def process_text_into_packages(text: str) -> tuple:
             logger.info(f"Classifying chunk {i + 1}/{len(chunks)}...")
 
             word_count = len(chunk.split())
+
             suggested_table = await classify_section(chunk)
             await asyncio.sleep(0.3)
 
+            title = await generate_title(chunk)
+            await asyncio.sleep(0.3)
+
             package = {
+                "title": title,
                 "content": chunk,
                 "word_count": word_count,
                 "table": suggested_table,
@@ -121,7 +128,7 @@ async def process_text_into_packages(text: str) -> tuple:
             packages.append(package)
             total_words += word_count
 
-            logger.info(f"Chunk {i + 1} complete - words: {word_count}, table: {suggested_table}")
+            logger.info(f"Chunk {i + 1} complete - words: {word_count}, table: {suggested_table}, title: {title}")
 
         logger.info(f"All chunks processed - {len(packages)} packages, {total_words} total words")
         return packages, total_words
@@ -131,18 +138,25 @@ async def process_text_into_packages(text: str) -> tuple:
         raise ValueError(f"Rewrite process failed: {str(e)}")
 
 async def classify_section(text: str) -> str:
-    """
-    Classify a chunk into one of the specialist tables.
-    """
-    tables_list = ", ".join(SPECIALIST_TABLES)
-
     prompt = (
-        f"Classify this text into exactly ONE of these Supabase tables:\n"
-        f"{tables_list}\n\n"
-        f"Rules:\n"
-        f"- Return ONLY the table name, nothing else\n"
-        f"- Pick the single best fit (e.g. SEO content -> seo)\n"
-        f"- Default to master_strategy if genuinely unclear\n\n"
+        f"You are classifying SEO and digital marketing content into specialist knowledge tables.\n"
+        f"ALL of these tables are SEO-related subcategories. Pick the MOST SPECIFIC match:\n\n"
+        f"- seo: general SEO, rankings, algorithms, technical SEO, on-page optimization\n"
+        f"- backlinks: link building, outreach, anchor text, domain authority\n"
+        f"- content_design: content creation, copywriting, UX writing, page structure\n"
+        f"- social_media: social platforms, engagement, paid social, influencers\n"
+        f"- analytics: tracking, metrics, reporting, Google Analytics, data\n"
+        f"- ai_prompt_engineering: AI tools, ChatGPT, prompts, LLMs\n"
+        f"- website_builder_mastery: site speed, CMS, WordPress, technical setup\n"
+        f"- psychology_empathy: persuasion, user behavior, conversion psychology\n"
+        f"- schema_skills: structured data, schema markup, rich results\n"
+        f"- multimodal_visual_search: image SEO, video SEO, visual search\n"
+        f"- critical_thinking: strategy, research, planning, frameworks\n"
+        f"- meta_skills: productivity, learning, personal development\n"
+        f"- master_strategy: broad strategy that spans multiple categories\n"
+        f"- code_skills: HTML, CSS, JavaScript, dev tools\n"
+        f"- website_types: ecommerce, blogs, landing pages, site types\n\n"
+        f"Return ONLY the table name. Prefer specific tables over 'seo' or 'master_strategy'.\n\n"
         f"Text (first 600 chars):\n{text[:600]}"
     )
 
@@ -154,8 +168,6 @@ async def classify_section(text: str) -> str:
             temperature=0.0
         )
         table = response.choices[0].message.content.strip().lower()
-
-        # Strip any extra words the model might add
         table = table.split()[0] if table.split() else "master_strategy"
 
         if table not in SPECIALIST_TABLES:
