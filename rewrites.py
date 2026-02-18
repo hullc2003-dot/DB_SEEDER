@@ -4,7 +4,7 @@ import os
 import re
 import asyncio
 import logging
-from openai import AsyncOpenAI
+from groq import Asyncgroq
 from dotenv import load_dotenv
 from config import SPECIALIST_TABLES
 
