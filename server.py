@@ -36,9 +36,12 @@ brain = BrainState()
 
 app = FastAPI(title="AI Brain API — Seeding Pipeline")
 
+app = FastAPI(title="AI Brain API — Seeding Pipeline")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("ALLOWED_ORIGIN", "*")],  # Lock this down in production
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
