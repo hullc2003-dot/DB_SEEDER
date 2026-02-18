@@ -6,7 +6,8 @@ python-dotenv
 fastapi
 uvicorn
 pydantic
-google-genai>=0.3.0
+google-genai==1.63.0
+google-auth>=2.47.0,<3.0.0
 scikit-learn
 joblib
 numpy
