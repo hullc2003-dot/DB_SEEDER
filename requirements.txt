@@ -1,7 +1,7 @@
 requests
 beautifulsoup4
-supabase==2.7.4
-groq
+supabase==2.3.0
+openai
 python-dotenv
 fastapi
 uvicorn
