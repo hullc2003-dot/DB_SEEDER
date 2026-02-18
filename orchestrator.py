@@ -20,7 +20,7 @@ class SeedingOrchestrator:
     Runs the full knowledge seeding pipeline:
 
     1. Gate check    — confirm config allows URL learning
-    2. Crawl         — auto-discover all URLs from seed
+    2. Crawler       — auto-discover all URLs from seed
     3. Fetch         — scrape raw text from each URL
     4. Rewrite       — summarize + classify into packages
     5. Embed         — generate 768d vectors via Gemini
@@ -82,24 +82,24 @@ class SeedingOrchestrator:
         logger.info("Gate check passed — pipeline is active")
 
         # ----------------------------------------------------------------
-        # STEP 2 — CRAWL
+        # STEP 2 — CRAWLER
         # ----------------------------------------------------------------
         logger.info(f"Step 2: Crawling from seed URL: {seed_url}")
 
         try:
-            urls = await crawl(seed_url)
+            urls = await crawler(seed_url)
             report["urls_discovered"] = len(urls)
-            logger.info(f"Crawl complete — {len(urls)} URLs discovered")
+            logger.info(f"Crawler complete — {len(urls)} URLs discovered")
         except Exception as e:
             report["status"] = "failed"
-            report["errors"].append(f"Crawl failed: {str(e)}")
-            logger.error(f"Crawl failed: {e}")
+            report["errors"].append(f"Crawler failed: {str(e)}")
+            logger.error(f"Crawler failed: {e}")
             return report
 
         if not urls:
             report["status"] = "failed"
-            report["errors"].append("Crawl returned no URLs")
-            logger.error("Crawl returned no URLs — aborting")
+            report["errors"].append("Crawler returned no URLs")
+            logger.error("Crawler returned no URLs — aborting")
             return report
 
         # ----------------------------------------------------------------
