@@ -28,8 +28,9 @@ SKIP_EXTENSIONS = {
 # URL patterns to skip — typically navigation noise
 
 SKIP_PATTERNS = [
-r"/tag/", r"/category/", r"/author/", r"/page/\d+",
-r"?", r"#", r"/feed/", r"/wp-", r"/cdn-cgi/"
+    r"/tag/", r"/category/", r"/author/", r"/page/\d+",
+    r"\?", r"/feed/", r"/wp-", r"/cdn-cgi/"
+
 ]
 
 def _is_valid_url(url: str, base_domain: str) -> bool:
