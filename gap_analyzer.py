@@ -1,27 +1,9 @@
 import logging
 from typing import Dict, Any, List
 from supabase import Client
+from config import SPECIALIST_TABLES
 
 logger = logging.getLogger(__name__)
-
-SPECIALIST_TABLES = [
-    "website_builder_mastery",
-    "seo",
-    "psychology_empathy",
-    "website_types",
-    "analytics",
-    "content_design",
-    "multimodal_visual_search",
-    "ai_prompt_engineering",
-    "code_skills",
-    "schema_skills",
-    "meta_skills",
-    "backlinks",
-    "social_media",
-    "master_strategy",
-    "critical_thinking",
-]
-
 
 class GapAnalyzer:
     """
