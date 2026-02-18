@@ -1,231 +1,234 @@
-# rewrites.py - Summarizes, adjusts, and classifies scraped text into packages
+# crawler.py - Auto-discovers internal URLs from a seed URL
 
-import os
-import re
 import asyncio
 import logging
-from openai import AsyncOpenAI
-from dotenv import load_dotenv
-from config import SPECIALIST_TABLES
+import re
+from typing import Set, List, Optional
+from urllib.parse import urljoin, urlparse
 
-load_dotenv()
+import requests
+from bs4 import BeautifulSoup
 
-logger = logging.getLogger("Rewrites")
+logger = logging.getLogger(“Crawler”)
 
-# — GROQ CONFIGURATION —
+# — CONFIGURATION —
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = "llama3-70b-8192"  # Updated — mixtral-8x7b-32768 is deprecated
+MAX_PAGES = 100          # Hard cap — prevents runaway crawls on large sites
+REQUEST_TIMEOUT = 10     # Seconds per request
+CRAWL_DELAY = 1.0        # Seconds between requests — be polite to servers
+MAX_DEPTH = 3            # How many links deep to follow from seed URL
 
-if not GROQ_API_KEY:
-    raise RuntimeError(
-        "GROQ_API_KEY environment variable not set. "
-        "Get your key from https://console.groq.com/keys"
+# File extensions to skip — not useful for text content
+
+SKIP_EXTENSIONS = {
+“.pdf”, “.jpg”, “.jpeg”, “.png”, “.gif”, “.svg”, “.webp”,
+“.mp4”, “.mp3”, “.zip”, “.tar”, “.gz”, “.exe”, “.css”, “.js”
+}
+
+# URL patterns to skip — typically navigation noise
+
+SKIP_PATTERNS = [
+r”/tag/”, r”/category/”, r”/author/”, r”/page/\d+”,
+r”?”, r”#”, r”/feed/”, r”/wp-”, r”/cdn-cgi/”
+]
+
+def _is_valid_url(url: str, base_domain: str) -> bool:
+“””
+Check if a URL is worth crawling.
+
+```
+Rules:
+    - Must be on the same domain as the seed URL
+    - Must not have a skippable file extension
+    - Must not match skip patterns
+    - Must be http or https
+
+Args:
+    url:         URL to validate
+    base_domain: Domain of the seed URL
+
+Returns:
+    True if the URL should be crawled
+"""
+try:
+    parsed = urlparse(url)
+
+    # Must be http/https
+    if parsed.scheme not in ("http", "https"):
+        return False
+
+    # Must be same domain
+    if parsed.netloc != base_domain:
+        return False
+
+    # Skip unwanted extensions
+    path = parsed.path.lower()
+    if any(path.endswith(ext) for ext in SKIP_EXTENSIONS):
+        return False
+
+    # Skip unwanted patterns
+    full_url = url.lower()
+    if any(re.search(pattern, full_url) for pattern in SKIP_PATTERNS):
+        return False
+
+    return True
+
+except Exception:
+    return False
+```
+
+def _extract_links(html: str, current_url: str, base_domain: str) -> Set[str]:
+“””
+Extract all valid internal links from a page’s HTML.
+
+```
+Args:
+    html:         Raw HTML string
+    current_url:  URL of the current page (for resolving relative links)
+    base_domain:  Domain to stay within
+
+Returns:
+    Set of absolute URLs found on the page
+"""
+soup = BeautifulSoup(html, "html.parser")
+links = set()
+
+for tag in soup.find_all("a", href=True):
+    href = tag["href"].strip()
+
+    # Skip empty, mailto, tel links
+    if not href or href.startswith(("mailto:", "tel:", "javascript:")):
+        continue
+
+    # Resolve relative URLs to absolute
+    absolute = urljoin(current_url, href)
+
+    # Strip fragments
+    absolute = absolute.split("#")[0].rstrip("/")
+
+    if _is_valid_url(absolute, base_domain):
+        links.add(absolute)
+
+return links
+```
+
+def _fetch_page(url: str) -> Optional[str]:
+“””
+Fetch a single page and return its HTML.
+
+```
+Args:
+    url: URL to fetch
+
+Returns:
+    HTML string or None if fetch fails
+"""
+try:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (compatible; SEOBot/1.0; "
+            "+https://your-render-domain.com)"
+        )
+    }
+    response = requests.get(url, timeout=REQUEST_TIMEOUT, headers=headers)
+    response.raise_for_status()
+
+    # Only process HTML pages
+    content_type = response.headers.get("Content-Type", "")
+    if "text/html" not in content_type:
+        logger.info(f"Skipping non-HTML page: {url}")
+        return None
+
+    return response.text
+
+except requests.exceptions.RequestException as e:
+    logger.warning(f"Failed to fetch {url}: {e}")
+    return None
+```
+
+async def crawl(seed_url: str) -> List[str]:
+“””
+Crawl a website starting from a seed URL and return all discovered URLs.
+
+```
+Uses breadth-first search up to MAX_DEPTH levels deep.
+Respects CRAWL_DELAY between requests.
+Hard caps at MAX_PAGES total.
+
+Args:
+    seed_url: Starting URL to crawl from
+
+Returns:
+    List of discovered URLs ready for the learning pipeline
+
+Raises:
+    ValueError: If the seed URL is invalid or unreachable
+"""
+parsed_seed = urlparse(seed_url)
+if not parsed_seed.scheme or not parsed_seed.netloc:
+    raise ValueError(f"Invalid seed URL: {seed_url}")
+
+base_domain = parsed_seed.netloc
+seed_url = seed_url.rstrip("/")
+
+logger.info(f"Starting crawl from: {seed_url} (domain: {base_domain})")
+logger.info(f"Limits — max pages: {MAX_PAGES}, max depth: {MAX_DEPTH}")
+
+visited: Set[str] = set()
+discovered: List[str] = []
+
+# Queue entries are (url, depth)
+queue: List[tuple] = [(seed_url, 0)]
+
+loop = asyncio.get_event_loop()
+
+while queue and len(discovered) < MAX_PAGES:
+    current_url, depth = queue.pop(0)
+
+    # Skip if already visited
+    if current_url in visited:
+        continue
+
+    visited.add(current_url)
+
+    logger.info(
+        f"Crawling [{len(discovered) + 1}/{MAX_PAGES}] "
+        f"depth={depth}: {current_url}"
     )
 
-# Groq uses OpenAI-compatible client pointed at Groq's base URL
+    # Fetch page in thread pool — requests is synchronous
+    html = await loop.run_in_executor(None, _fetch_page, current_url)
 
-client = AsyncOpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1"
+    if html is None:
+        logger.warning(f"Skipping {current_url} — fetch returned nothing")
+        continue
+
+    # This page is valid — add to discovered list
+    discovered.append(current_url)
+
+    # If we haven't hit max depth, find more links
+    if depth < MAX_DEPTH:
+        new_links = _extract_links(html, current_url, base_domain)
+        new_links -= visited  # Don't re-queue already visited pages
+
+        added = 0
+        for link in sorted(new_links):  # Sort for deterministic crawl order
+            if link not in [q[0] for q in queue]:
+                queue.append((link, depth + 1))
+                added += 1
+
+        logger.info(f"Found {len(new_links)} links, queued {added} new")
+
+    # Be polite — delay between requests
+    if queue:
+        await asyncio.sleep(CRAWL_DELAY)
+
+logger.info(
+    f"Crawl complete — "
+    f"discovered: {len(discovered)} pages, "
+    f"visited: {len(visited)} URLs, "
+    f"remaining in queue: {len(queue)}"
 )
 
-async def process_text_into_packages(text: str) -> tuple:
-    """
-    Main pipeline function: split, summarize, adjust, and classify scraped text.
-
-    Steps:
-        1. Split raw text into sections
-        2. Summarize each section (max 25% reduction)
-        3. Adjust length to 500-1000 word target if needed
-        4. Classify into one of the 15 specialist tables
-
-    Args:
-        text: Raw plain text from learning.py
-
-    Returns:
-        Tuple of (packages list, total_word_count)
-
-    Raises:
-        ValueError: If any step in the pipeline fails
-    """
-    if not text.strip():
-        logger.warning("process_text_into_packages called with empty text")
-        return [], 0
-
-    try:
-        # Step 1: Split into sections on headings or double newlines
-        sections = re.split(r'\n\s*(#{1,6}\s.*?$|\n\n+)', text, flags=re.MULTILINE)
-        sections = [s.strip() for s in sections if s.strip()]
-
-        # Gate: skip micro-sections under 50 words — not worth an LLM call
-        sections = [s for s in sections if len(s.split()) >= 50]
-
-        if not sections:
-            logger.warning("No usable sections found after split and filtering")
-            return [], 0
-
-        logger.info(f"Split into {len(sections)} sections for processing")
-
-        packages = []
-        total_words = 0
-
-        for i, section in enumerate(sections):
-            logger.info(f"Processing section {i + 1}/{len(sections)}...")
-
-            # Step 2: Summarize
-            summary = await summarize_section(section)
-            word_count = len(summary.split())
-
-            # Step 3: Adjust length if outside 500-1000 word target
-            if word_count < 500 or word_count > 1000:
-                summary = await adjust_summary_length(summary, word_count)
-                word_count = len(summary.split())
-
-            # Step 4: Classify into specialist table
-            suggested_table = await classify_section(summary)
-
-            package = {
-                "content": summary,
-                "word_count": word_count,
-                "table": suggested_table,
-                "embedding": None  # Filled in by embedder.py
-            }
-
-            packages.append(package)
-            total_words += word_count
-
-            logger.info(
-                f"Section {i + 1} complete — "
-                f"words: {word_count}, table: {suggested_table}"
-            )
-
-        logger.info(
-            f"All sections processed — "
-            f"{len(packages)} packages, {total_words} total words"
-        )
-        return packages, total_words
-
-    except Exception as e:
-        logger.error(f"Rewrite pipeline failed: {e}")
-        raise ValueError(f"Rewrite process failed: {str(e)}")
-
-async def summarize_section(section: str) -> str:
-    """
-    Summarize a section, retaining at least 75% of original word count.
-
-    Args:
-        section: Raw text section to summarize
-
-    Returns:
-        Summarized text string
-    """
-    original_words = len(section.split())
-    min_keep = int(original_words * 0.75)
-
-    prompt = (
-        f"Summarize this section for optimal readability and learning:\n"
-        f"- Retain at least {min_keep} words. Prioritize coherent full sentences over brevity.\n"
-        f"- Focus on educational value — keep key explanations, examples, and structure.\n"
-        f"- Output readable paragraphs, not bullet fragments.\n\n"
-        f"Section:\n{section}"
-    )
-
-    try:
-        response = await client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
-            temperature=0.5
-        )
-        result = response.choices[0].message.content.strip()
-        logger.info(f"Summarized {original_words} → {len(result.split())} words")
-        return result
-
-    except Exception as e:
-        logger.error(f"Summarize failed: {e}")
-        raise ValueError(f"Summarize failed: {str(e)}")
-
-async def adjust_summary_length(summary: str, current_count: int) -> str:
-    """
-    Expand or condense a summary to fit the 500-1000 word target.
-
-    Args:
-        summary:       Current summary text
-        current_count: Current word count
-
-    Returns:
-        Adjusted summary text
-    """
-    if current_count < 500:
-        direction = (
-            "Expand to at least 500 words while maintaining learnability. "
-            "Add explanatory details, examples, or context where helpful."
-        )
-    else:
-        direction = (
-            "Condense to a maximum of 1000 words. "
-            "Remove redundancies but preserve all key learning content."
-        )
-
-    prompt = f"{direction}\n\nSummary:\n{summary}"
-
-    try:
-        response = await client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
-            temperature=0.5
-        )
-        result = response.choices[0].message.content.strip()
-        logger.info(f"Adjusted {current_count} → {len(result.split())} words")
-        return result
-
-    except Exception as e:
-        logger.error(f"Length adjustment failed: {e}")
-        raise ValueError(f"Length adjust failed: {str(e)}")
-
-async def classify_section(summary: str) -> str:
-    """
-    Classify a summary into one of the 15 specialist tables.
-
-    Args:
-        summary: Summarized text to classify
-
-    Returns:
-        Table name string — guaranteed to be in SPECIALIST_TABLES
-    """
-    tables_list = ", ".join(SPECIALIST_TABLES)
-
-    prompt = (
-        f"Classify this summary into exactly ONE of these Supabase tables:\n"
-        f"{tables_list}\n\n"
-        f"Rules:\n"
-        f"- Return ONLY the table name, nothing else\n"
-        f"- Pick the single best fit (e.g. SEO content → seo)\n"
-        f"- Default to master_strategy if genuinely unclear\n\n"
-        f"Summary (first 1000 chars):\n{summary[:1000]}"
-    )
-
-    try:
-        response = await client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=50,
-            temperature=0.0  # Deterministic — classification should not be creative
-        )
-        table = response.choices[0].message.content.strip().lower()
-
-        # Validate — fall back to master_strategy if unrecognized
-        if table not in SPECIALIST_TABLES:
-            logger.warning(
-                f"Classifier returned unknown table '{table}' — "
-                f"falling back to master_strategy"
-            )
-            return "master_strategy"
-
-        return table
-
-    except Exception as e:
-        logger.error(f"Classification failed: {e}")
-        raise ValueError(f"Classify failed: {str(e)}")
+return discovered
+```
