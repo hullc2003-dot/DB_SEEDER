@@ -34,13 +34,17 @@ def get_supabase_client() -> Client:
                 "Set SUPABASE_URL and SUPABASE_KEY environment variables."
             )
 
-    try:
-        _client = create_client(url, key)
-        logger.info("Supabase client initialized")
+        try:
+        # Add the options parameter here
+        _client = create_client(
+            url, 
+            key, 
+            options={"schema": "supabase_functions"}
+        )
+        logger.info("Supabase client initialized with schema: supabase_functions")
     except Exception as e:
         raise RuntimeError(f"Supabase client initialization failed: {e}")
 
-    return _client
 
 # — MAIN INSERT FUNCTION —
 
