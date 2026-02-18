@@ -1,4 +1,4 @@
-# orchestrator.py - Wires the full seeding pipeline from crawl to DB insert
+# orchestrator.py - Wires the full seeding pipeline from crawler to DB insert
 
 import asyncio
 import logging
