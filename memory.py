@@ -17,7 +17,8 @@ _client: Optional[Client] = None
 
 def get_supabase_client() -> Client:
     """
-    Get or create Supabase client singleton.
+    Get or create Supabase client singleton configured for the 
+    'supabase_functions' schema.
 
     Raises:
         RuntimeError: If SUPABASE_URL or SUPABASE_KEY are not set
@@ -35,16 +36,18 @@ def get_supabase_client() -> Client:
             )
 
         try:
-        # Add the options parameter here
-        _client = create_client(
-            url, 
-            key, 
-            options={"schema": "supabase_functions"}
-        )
-        logger.info("Supabase client initialized with schema: supabase_functions")
-    except Exception as e:
-        raise RuntimeError(f"Supabase client initialization failed: {e}")
+            # Added options to target the exposed schema 'supabase_functions'
+            # This bypasses the PGRST106 error for the hidden public schema.
+            _client = create_client(
+                url, 
+                key, 
+                options={"schema": "supabase_functions"}
+            )
+            logger.info("Supabase client initialized with schema: supabase_functions")
+        except Exception as e:
+            raise RuntimeError(f"Supabase client initialization failed: {e}")
 
+    return _client
 
 # — MAIN INSERT FUNCTION —
 
