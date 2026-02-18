@@ -1,11 +1,10 @@
-# memory.py - Revised
+# memory.py - Fixed: use dict-based options to avoid ClientOptions shape issues
 
 import os
 import logging
 import asyncio
 from typing import List, Dict, Any, Optional, Sequence
 from supabase import create_client, Client
-from supabase.lib.client_options import ClientOptions
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -35,6 +34,10 @@ _ALLOWED_TABLES: Sequence[str] = (
 _client: Optional[Client] = None
 
 def get_supabase_client(schema: str = "supabase_functions") -> Client:
+    """
+    Return a singleton Supabase client. Use a dict for 'options' to remain
+    compatible across supabase-py versions and avoid missing-attribute errors.
+    """
     global _client
     if _client is None:
         url = os.getenv("SUPABASE_URL")
@@ -43,11 +46,22 @@ def get_supabase_client(schema: str = "supabase_functions") -> Client:
             raise RuntimeError("Missing Supabase credentials (SUPABASE_URL / SUPABASE_KEY).")
 
         try:
-            opts = ClientOptions(
-                schema=schema,
-                headers={},
-                storage_client_timeout=10
-            )
+            # Robust dict-based options that include a minimal 'storage' shape.
+            # This prevents "'ClientOptions' object has no attribute 'storage'" errors.
+            opts = {
+                "schema": schema,
+                "headers": {},
+                # Provide a minimal storage shape the client may expect
+                "storage": {
+                    "headers": {},
+                    "url": None,
+                    "timeout": 10,
+                },
+                "storage_client_timeout": 10,
+                # Provide realtime placeholder if client inspects it
+                "realtime": {},
+            }
+
             _client = create_client(url, key, options=opts)
             logger.info("Supabase client initialized with schema: %s", schema)
         except Exception as e:
@@ -111,7 +125,6 @@ async def insert_packages_to_supabase(
 
             # supabase client may return a dict-like response; check error
             if getattr(result, "status_code", None) not in (None, 200, 201):
-                # handle unexpected response objects from different client versions
                 logger.warning("Insert returned non-2xx status: %s", getattr(result, "status_code", result))
             inserted_count += 1  # count rows inserted
             details.append({"index": i, "status": "inserted", "table": table})
