@@ -25,9 +25,8 @@ if not GROQ_API_KEY:
 
 # Groq uses OpenAI-compatible client pointed at Groq's base URL
 
-client = AsyncOpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1"
+client = AsyncGroq(api_key=GROQ_API_KEY)
+
 )
 
 async def process_text_into_packages(text: str) -> tuple:
