@@ -16,8 +16,8 @@ logger = logging.getLogger("Rewrites")
 
 # — OPENROUTER CONFIGURATION —
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-MODEL = "google/gemma-3n-e2b-it:free"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 50
