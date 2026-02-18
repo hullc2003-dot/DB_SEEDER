@@ -87,11 +87,14 @@ async def insert_packages_to_supabase(
             continue
 
         row = {
-            "content": content,
-            "embedding": embedding,
-            "source_url": source_url,
-            "chunk_index": i,
-            "word_count": word_count,
+    "title": package.get("title", ""),  # add this
+    "content": content,
+    "embedding": embedding,
+    "source_url": source_url,
+    "chunk_index": i,
+    "word_count": word_count,
+}
+
         }
 
         try:
