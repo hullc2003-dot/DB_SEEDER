@@ -24,16 +24,30 @@ if not GROQ_API_KEY:
     )
 
 # Groq uses OpenAI-compatible client pointed at Groq's base URL
-# Added timeout=60.0 to prevent connection errors on long sections
+
 client = AsyncOpenAI(
     api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1",
-    timeout=60.0
+    base_url="https://api.groq.com/openai/v1"
 )
 
 async def process_text_into_packages(text: str) -> tuple:
     """
     Main pipeline function: split, summarize, adjust, and classify scraped text.
+
+    Steps:
+        1. Split raw text into sections
+        2. Summarize each section (max 25% reduction)
+        3. Adjust length to 500-1000 word target if needed
+        4. Classify into one of the 15 specialist tables
+
+    Args:
+        text: Raw plain text from learning.py
+
+    Returns:
+        Tuple of (packages list, total_word_count)
+
+    Raises:
+        ValueError: If any step in the pipeline fails
     """
     if not text.strip():
         logger.warning("process_text_into_packages called with empty text")
@@ -44,7 +58,7 @@ async def process_text_into_packages(text: str) -> tuple:
         sections = re.split(r'\n\s*(#{1,6}\s.*?$|\n\n+)', text, flags=re.MULTILINE)
         sections = [s.strip() for s in sections if s.strip()]
 
-        # Gate: skip micro-sections under 50 words
+        # Gate: skip micro-sections under 50 words — not worth an LLM call
         sections = [s for s in sections if len(s.split()) >= 50]
 
         if not sections:
@@ -61,18 +75,15 @@ async def process_text_into_packages(text: str) -> tuple:
 
             # Step 2: Summarize
             summary = await summarize_section(section)
-            await asyncio.sleep(0.5) # Cooldown to prevent rate limit/connection drops
             word_count = len(summary.split())
 
             # Step 3: Adjust length if outside 500-1000 word target
             if word_count < 500 or word_count > 1000:
                 summary = await adjust_summary_length(summary, word_count)
-                await asyncio.sleep(0.5) # Cooldown
                 word_count = len(summary.split())
 
             # Step 4: Classify into specialist table
             suggested_table = await classify_section(summary)
-            await asyncio.sleep(0.5) # Cooldown
 
             package = {
                 "content": summary,
@@ -102,6 +113,12 @@ async def process_text_into_packages(text: str) -> tuple:
 async def summarize_section(section: str) -> str:
     """
     Summarize a section, retaining at least 75% of original word count.
+
+    Args:
+        section: Raw text section to summarize
+
+    Returns:
+        Summarized text string
     """
     original_words = len(section.split())
     min_keep = int(original_words * 0.75)
@@ -132,6 +149,13 @@ async def summarize_section(section: str) -> str:
 async def adjust_summary_length(summary: str, current_count: int) -> str:
     """
     Expand or condense a summary to fit the 500-1000 word target.
+
+    Args:
+        summary:       Current summary text
+        current_count: Current word count
+
+    Returns:
+        Adjusted summary text
     """
     if current_count < 500:
         direction = (
@@ -164,6 +188,12 @@ async def adjust_summary_length(summary: str, current_count: int) -> str:
 async def classify_section(summary: str) -> str:
     """
     Classify a summary into one of the 15 specialist tables.
+
+    Args:
+        summary: Summarized text to classify
+
+    Returns:
+        Table name string — guaranteed to be in SPECIALIST_TABLES
     """
     tables_list = ", ".join(SPECIALIST_TABLES)
 
@@ -182,10 +212,11 @@ async def classify_section(summary: str) -> str:
             model=GROQ_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=50,
-            temperature=0.0
+            temperature=0.0  # Deterministic — classification should not be creative
         )
         table = response.choices[0].message.content.strip().lower()
 
+        # Validate — fall back to master_strategy if unrecognized
         if table not in SPECIALIST_TABLES:
             logger.warning(
                 f"Classifier returned unknown table '{table}' — "
