@@ -5,6 +5,7 @@ import logging
 import asyncio
 from typing import List, Dict, Any, Optional
 from supabase import create_client, Client
+from supabase.lib.client_options import ClientOptions  # Fix: Necessary for v2.x options
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -36,12 +37,14 @@ def get_supabase_client() -> Client:
             )
 
         try:
-            # Added options to target the exposed schema 'supabase_functions'
-            # This bypasses the PGRST106 error for the hidden public schema.
+            # Fix: Wrap the schema dict in a ClientOptions object
+            # This prevents the 'dict' object has no attribute 'headers' error
+            opts = ClientOptions(schema="supabase_functions")
+            
             _client = create_client(
                 url, 
                 key, 
-                options={"schema": "supabase_functions"}
+                options=opts
             )
             logger.info("Supabase client initialized with schema: supabase_functions")
         except Exception as e:
