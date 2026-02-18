@@ -4,7 +4,7 @@ import os
 import re
 import asyncio
 import logging
-from groq import Asyncgroq
+from groq import AsyncGroq
 from dotenv import load_dotenv
 from config import SPECIALIST_TABLES
 
@@ -23,11 +23,9 @@ if not GROQ_API_KEY:
         "Get your key from https://console.groq.com/keys"
     )
 
-# Groq uses OpenAI-compatible client pointed at Groq's base URL
+# Native Groq SDK client
 
 client = AsyncGroq(api_key=GROQ_API_KEY)
-
-)
 
 async def process_text_into_packages(text: str) -> tuple:
     """
