@@ -15,20 +15,28 @@ class GapAnalyzer:
         content IS NULL OR content = ''
     """
 
-    def __init__(self, supabase_client: Optional[object] = None):
-        # Allow injection for testing; default to centralized client
-        self.supabase = supabase_client or get_supabase_client()
+    def __init__(self, supabase_client: Optional[object] = None, supabase: Optional[object] = None):
+        """
+        Backwards-compatible constructor: accepts either `supabase_client` (preferred)
+        or `supabase` (legacy callers). If neither is provided, falls back to
+        the centralized client from get_supabase_client().
+        """
+        client = supabase_client if supabase_client is not None else supabase
+        self.supabase = client or get_supabase_client()
 
     def analyze(self) -> Dict[str, List[Dict[str, Any]]]:
         report: Dict[str, List[Dict[str, Any]]] = {}
+
+        logger.debug("Starting gap analysis for tables: %s", SPECIALIST_TABLES)
 
         for table in SPECIALIST_TABLES:
             try:
                 empty_rows = self._find_empty_rows(table)
                 if empty_rows:
                     report[table] = empty_rows
-            except Exception:
-                logger.exception(f"Error analyzing gaps in {table}")
+            except Exception as exc:
+                # include table name and exception details to aid debugging
+                logger.exception("Error analyzing gaps in table '%s': %s", table, exc)
 
         return report
 
