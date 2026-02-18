@@ -1,121 +1,239 @@
-# rewrites.py - Summarizes and packages text (updated to use Groq API instead of Gemini/OpenAI)
-from openai import AsyncOpenAI  # Groq is compatible with OpenAI client
-import asyncio
-import re
-from dotenv import load_dotenv
+# rewrites.py - Summarizes, adjusts, and classifies scraped text into packages
+
 import os
+import re
+import asyncio
+import logging
+from openai import AsyncOpenAI
+from dotenv import load_dotenv
+from config import SPECIALIST_TABLES
 
 load_dotenv()
 
-# Groq setup: Use Groq API key and base URL
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = 'mixtral-8x7b-32768'  # Or your preferred Groq model (e.g., 'llama2-70b-4096' for speed)
+logger = logging.getLogger(“Rewrites”)
 
-client = AsyncOpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1"  # Groq's OpenAI-compatible endpoint
+# — GROQ CONFIGURATION —
+
+GROQ_API_KEY = os.getenv(“GROQ_API_KEY”)
+GROQ_MODEL = “llama3-70b-8192”  # Updated — mixtral-8x7b-32768 is deprecated
+
+if not GROQ_API_KEY:
+raise RuntimeError(
+“GROQ_API_KEY environment variable not set. “
+“Get your key from https://console.groq.com/keys”
 )
 
-TABLES = [
-    "ai_prompt_engineering_junk", "analytics_junk", "backlinks_junk", "code_skills_junk",
-    "content_design_junk", "critical_thinking_junk", "master_strategy_junk", "meta_skills_junk",
-    "multimodal_visual_search_junk", "psychology_empathy_junk", "schema_skills_junk",
-    "seo_junk", "social_media_junk", "website_builder_mastery_junk", "website_types_junk"
-]
+# Groq uses OpenAI-compatible client pointed at Groq’s base URL
+
+client = AsyncOpenAI(
+api_key=GROQ_API_KEY,
+base_url=“https://api.groq.com/openai/v1”
+)
 
 async def process_text_into_packages(text: str) -> tuple:
-    """Main function: Separate, summarize, package, and classify text (steps 12-20)."""
-    try:
-        # Step 12: Separate into sections using headings/titles/schema
-        sections = re.split(r'\n\s*(#{1,6}\s.*?$|\w+:\s|\n\n+)', text, flags=re.MULTILINE)
-        sections = [s.strip() for s in sections if s.strip()]
+“””
+Main pipeline function: split, summarize, adjust, and classify scraped text.
 
-        packages = []
-        total_words = 0  # Step 19: Accumulate total words
-        
-        for section in sections:
-            # Step 13-15: Summarize (reduce <=25%, prioritize readability/learnability)
-            summary = await summarize_section(section)
+```
+Steps:
+    1. Split raw text into sections
+    2. Summarize each section (max 25% reduction)
+    3. Adjust length to 500-1000 word target if needed
+    4. Classify into one of the 15 specialist tables
+
+Args:
+    text: Raw plain text from learning.py
+
+Returns:
+    Tuple of (packages list, total_word_count)
+
+Raises:
+    ValueError: If any step in the pipeline fails
+"""
+if not text.strip():
+    logger.warning("process_text_into_packages called with empty text")
+    return [], 0
+
+try:
+    # Step 1: Split into sections on headings or double newlines
+    sections = re.split(r'\n\s*(#{1,6}\s.*?$|\n\n+)', text, flags=re.MULTILINE)
+    sections = [s.strip() for s in sections if s.strip()]
+
+    # Gate: skip micro-sections under 50 words — not worth an LLM call
+    sections = [s for s in sections if len(s.split()) >= 50]
+
+    if not sections:
+        logger.warning("No usable sections found after split and filtering")
+        return [], 0
+
+    logger.info(f"Split into {len(sections)} sections for processing")
+
+    packages = []
+    total_words = 0
+
+    for i, section in enumerate(sections):
+        logger.info(f"Processing section {i + 1}/{len(sections)}...")
+
+        # Step 2: Summarize
+        summary = await summarize_section(section)
+        word_count = len(summary.split())
+
+        # Step 3: Adjust length if outside 500-1000 word target
+        if word_count < 500 or word_count > 1000:
+            summary = await adjust_summary_length(summary, word_count)
             word_count = len(summary.split())
-            
-            # Step 17: Adjust length if outside 500-1000, but prioritize learnability
-            if word_count < 500 or word_count > 1000:
-                summary = await adjust_summary_length(summary, word_count)
-                word_count = len(summary.split())
-            
-            # Step 16: Classify/label with suggested table
-            suggested_table = await classify_section(summary)
-            
-            # Package (step 16/18)
-            package = {
-                "content": summary,
-                "word_count": word_count,
-                "table": suggested_table
-            }
-            packages.append(package)
-            total_words += word_count
-        
-        # Step 20: Return packages + total_words for handoff to memory.py
-        return packages, total_words
-    except Exception as e:
-        raise ValueError(f"Rewrite process failed: {str(e)}")
+
+        # Step 4: Classify into specialist table
+        suggested_table = await classify_section(summary)
+
+        package = {
+            "content": summary,
+            "word_count": word_count,
+            "table": suggested_table,
+            "embedding": None  # Filled in by embedder.py
+        }
+
+        packages.append(package)
+        total_words += word_count
+
+        logger.info(
+            f"Section {i + 1} complete — "
+            f"words: {word_count}, table: {suggested_table}"
+        )
+
+    logger.info(
+        f"All sections processed — "
+        f"{len(packages)} packages, {total_words} total words"
+    )
+    return packages, total_words
+
+except Exception as e:
+    logger.error(f"Rewrite pipeline failed: {e}")
+    raise ValueError(f"Rewrite process failed: {str(e)}")
+```
 
 async def summarize_section(section: str) -> str:
-    """Summarize a section (steps 13-15)."""
-    original_words = len(section.split())
-    min_keep = int(original_words * 0.75)  # Max 25% reduction
-    
-    prompt = f"""
-    Summarize this section for optimal readability and learning:
-    - Retain at least {min_keep} words; prioritize coherent, full sentences over brevity.
-    - Focus on educational value—keep key explanations, examples, and structure.
-    - Output readable paragraphs, not fragments.
-    Section: {section}
-    """
-    try:
-        response = await client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
-            temperature=0.5  # Balanced for readability
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        raise ValueError(f"Summarize failed: {str(e)}")
+“””
+Summarize a section, retaining at least 75% of original word count.
+
+```
+Args:
+    section: Raw text section to summarize
+
+Returns:
+    Summarized text string
+"""
+original_words = len(section.split())
+min_keep = int(original_words * 0.75)
+
+prompt = (
+    f"Summarize this section for optimal readability and learning:\n"
+    f"- Retain at least {min_keep} words. Prioritize coherent full sentences over brevity.\n"
+    f"- Focus on educational value — keep key explanations, examples, and structure.\n"
+    f"- Output readable paragraphs, not bullet fragments.\n\n"
+    f"Section:\n{section}"
+)
+
+try:
+    response = await client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=2000,
+        temperature=0.5
+    )
+    result = response.choices[0].message.content.strip()
+    logger.info(f"Summarized {original_words} → {len(result.split())} words")
+    return result
+
+except Exception as e:
+    logger.error(f"Summarize failed: {e}")
+    raise ValueError(f"Summarize failed: {str(e)}")
+```
 
 async def adjust_summary_length(summary: str, current_count: int) -> str:
-    """Adjust package size if needed (step 17)."""
-    if current_count < 500:
-        direction = "Expand to at least 500 words while maintaining learnability and adding explanatory details if helpful."
-    else:
-        direction = "Condense to max 1000 words, removing redundancies but preserving key learning content."
-    
-    prompt = f"{direction}\nSummary: {summary}"
-    try:
-        response = await client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        raise ValueError(f"Length adjust failed: {str(e)}")
+“””
+Expand or condense a summary to fit the 500-1000 word target.
+
+```
+Args:
+    summary:       Current summary text
+    current_count: Current word count
+
+Returns:
+    Adjusted summary text
+"""
+if current_count < 500:
+    direction = (
+        "Expand to at least 500 words while maintaining learnability. "
+        "Add explanatory details, examples, or context where helpful."
+    )
+else:
+    direction = (
+        "Condense to a maximum of 1000 words. "
+        "Remove redundancies but preserve all key learning content."
+    )
+
+prompt = f"{direction}\n\nSummary:\n{summary}"
+
+try:
+    response = await client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=2000,
+        temperature=0.5
+    )
+    result = response.choices[0].message.content.strip()
+    logger.info(f"Adjusted {current_count} → {len(result.split())} words")
+    return result
+
+except Exception as e:
+    logger.error(f"Length adjustment failed: {e}")
+    raise ValueError(f"Length adjust failed: {str(e)}")
+```
 
 async def classify_section(summary: str) -> str:
-    """Classify into a junk table (step 16)."""
-    prompt = f"""
-    Classify this summary into ONE of these Supabase tables: {', '.join(TABLES)}.
-    Pick the best fit (e.g., SEO content -> seo_junk).
-    Return ONLY the table name.
-    Summary: {summary[:1000]}...
-    """
-    try:
-        response = await client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=50
+“””
+Classify a summary into one of the 15 specialist tables.
+
+```
+Args:
+    summary: Summarized text to classify
+
+Returns:
+    Table name string — guaranteed to be in SPECIALIST_TABLES
+"""
+tables_list = ", ".join(SPECIALIST_TABLES)
+
+prompt = (
+    f"Classify this summary into exactly ONE of these Supabase tables:\n"
+    f"{tables_list}\n\n"
+    f"Rules:\n"
+    f"- Return ONLY the table name, nothing else\n"
+    f"- Pick the single best fit (e.g. SEO content → seo)\n"
+    f"- Default to master_strategy if genuinely unclear\n\n"
+    f"Summary (first 1000 chars):\n{summary[:1000]}"
+)
+
+try:
+    response = await client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=50,
+        temperature=0.0  # Deterministic — classification should not be creative
+    )
+    table = response.choices[0].message.content.strip().lower()
+
+    # Validate — fall back to master_strategy if unrecognized
+    if table not in SPECIALIST_TABLES:
+        logger.warning(
+            f"Classifier returned unknown table '{table}' — "
+            f"falling back to master_strategy"
         )
-        table = response.choices[0].message.content.strip()
-        return table if table in TABLES else TABLES[0]  # Fallback to first table
-    except Exception as e:
-        raise ValueError(f"Classify failed: {str(e)}")
+        return "master_strategy"
+
+    return table
+
+except Exception as e:
+    logger.error(f"Classification failed: {e}")
+    raise ValueError(f"Classify failed: {str(e)}")
+```
