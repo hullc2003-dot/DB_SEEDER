@@ -1,4 +1,6 @@
-# rewrites.py - Summarizes, adjusts, and classifies scraped text into packages
+# rewrites.py - Chunks and classifies scraped text into packages
+
+# No summarization — raw text is chunked to preserve all knowledge
 
 import os
 import re
@@ -10,161 +12,164 @@ from config import SPECIALIST_TABLES
 
 load_dotenv()
 
-logger = logging.getLogger("Rewrites")
+logger = logging.getLogger(“Rewrites”)
 
 # — OPENROUTER CONFIGURATION —
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-MODEL = "meta-llama/llama-3-70b-instruct"
+OPENROUTER_API_KEY = os.getenv(“OPENROUTER_API_KEY”)
+MODEL = “meta-llama/llama-3-70b-instruct”
+
+CHUNK_SIZE = 800       # Target words per chunk
+CHUNK_OVERLAP = 50     # Words of overlap between chunks for context continuity
 
 if not OPENROUTER_API_KEY:
-    raise RuntimeError(
-        "OPENROUTER_API_KEY environment variable not set. "
-        "Get your key from https://openrouter.ai/keys"
-    )
-
-client = AsyncOpenAI(
-    api_key=OPENROUTER_API_KEY,
-    base_url="https://openrouter.ai/api/v1"
+raise RuntimeError(
+“OPENROUTER_API_KEY environment variable not set. “
+“Get your key from https://openrouter.ai/keys”
 )
 
+client = AsyncOpenAI(
+api_key=OPENROUTER_API_KEY,
+base_url=“https://openrouter.ai/api/v1”
+)
+
+def chunk_text(text: str) -> list:
+“””
+Split text into ~800 word chunks by word count, not by headings.
+Tries to split on sentence boundaries for cleaner chunks.
+“””
+# Clean up whitespace
+text = re.sub(r’\n{3,}’, ‘\n\n’, text.strip())
+
+```
+words = text.split()
+if not words:
+    return []
+
+chunks = []
+start = 0
+
+while start < len(words):
+    end = min(start + CHUNK_SIZE, len(words))
+
+    # Try to end on a sentence boundary within the last 100 words
+    if end < len(words):
+        chunk_words = words[start:end]
+        chunk_text_str = ' '.join(chunk_words)
+
+        # Find last sentence-ending punctuation in the final 100 words
+        last_sentence = max(
+            chunk_text_str.rfind('. ', len(chunk_text_str) - 600),
+            chunk_text_str.rfind('! ', len(chunk_text_str) - 600),
+            chunk_text_str.rfind('? ', len(chunk_text_str) - 600),
+        )
+
+        if last_sentence > 0:
+            # Trim to sentence boundary
+            trimmed = chunk_text_str[:last_sentence + 1].strip()
+            chunks.append(trimmed)
+            # Count words in trimmed chunk to set next start
+            trimmed_word_count = len(trimmed.split())
+            start = start + trimmed_word_count - CHUNK_OVERLAP
+        else:
+            chunks.append(chunk_text_str)
+            start = end - CHUNK_OVERLAP
+    else:
+        chunks.append(' '.join(words[start:end]))
+        break
+
+    # Safety: prevent infinite loop
+    if start <= 0:
+        break
+
+return [c for c in chunks if len(c.split()) >= 50]
+```
+
 async def process_text_into_packages(text: str) -> tuple:
-    if not text.strip():
-        logger.warning("process_text_into_packages called with empty text")
+“””
+Main pipeline: chunk raw text and classify each chunk.
+No summarization — all original content is preserved.
+“””
+if not text.strip():
+logger.warning(“process_text_into_packages called with empty text”)
+return [], 0
+
+```
+try:
+    chunks = chunk_text(text)
+
+    if not chunks:
+        logger.warning("No usable chunks found after splitting")
         return [], 0
 
-    try:
-        sections = re.split(r'\n\s*(#{1,6}\s.*?$|\n\n+)', text, flags=re.MULTILINE)
-        sections = [s.strip() for s in sections if s.strip()]
-        sections = [s for s in sections if len(s.split()) >= 50]
+    logger.info(f"Split into {len(chunks)} chunks for processing")
 
-        if not sections:
-            logger.warning("No usable sections found after split and filtering")
-            return [], 0
+    packages = []
+    total_words = 0
 
-        logger.info(f"Split into {len(sections)} sections for processing")
+    for i, chunk in enumerate(chunks):
+        logger.info(f"Classifying chunk {i + 1}/{len(chunks)}...")
 
-        packages = []
-        total_words = 0
+        word_count = len(chunk.split())
+        suggested_table = await classify_section(chunk)
+        await asyncio.sleep(0.3)
 
-        for i, section in enumerate(sections):
-            logger.info(f"Processing section {i + 1}/{len(sections)}...")
+        package = {
+            "content": chunk,
+            "word_count": word_count,
+            "table": suggested_table,
+            "embedding": None
+        }
 
-            summary = await summarize_section(section)
-            await asyncio.sleep(0.3)
-            word_count = len(summary.split())
+        packages.append(package)
+        total_words += word_count
 
-            if word_count < 500 or word_count > 1000:
-                summary = await adjust_summary_length(summary, word_count)
-                await asyncio.sleep(0.3)
-                word_count = len(summary.split())
+        logger.info(f"Chunk {i + 1} complete - words: {word_count}, table: {suggested_table}")
 
-            suggested_table = await classify_section(summary)
-            await asyncio.sleep(0.3)
+    logger.info(f"All chunks processed - {len(packages)} packages, {total_words} total words")
+    return packages, total_words
 
-            package = {
-                "content": summary,
-                "word_count": word_count,
-                "table": suggested_table,
-                "embedding": None
-            }
+except Exception as e:
+    logger.error(f"Rewrite pipeline failed: {e}")
+    raise ValueError(f"Rewrite process failed: {str(e)}")
+```
 
-            packages.append(package)
-            total_words += word_count
+async def classify_section(text: str) -> str:
+“””
+Classify a chunk into one of the specialist tables.
+“””
+tables_list = “, “.join(SPECIALIST_TABLES)
 
-            logger.info(f"Section {i + 1} complete - words: {word_count}, table: {suggested_table}")
+```
+prompt = (
+    f"Classify this text into exactly ONE of these Supabase tables:\n"
+    f"{tables_list}\n\n"
+    f"Rules:\n"
+    f"- Return ONLY the table name, nothing else\n"
+    f"- Pick the single best fit (e.g. SEO content -> seo)\n"
+    f"- Default to master_strategy if genuinely unclear\n\n"
+    f"Text (first 600 chars):\n{text[:600]}"
+)
 
-        logger.info(f"All sections processed - {len(packages)} packages, {total_words} total words")
-        return packages, total_words
-
-    except Exception as e:
-        logger.error(f"Rewrite pipeline failed: {e}")
-        raise ValueError(f"Rewrite process failed: {str(e)}")
-
-async def summarize_section(section: str) -> str:
-    original_words = len(section.split())
-    min_keep = int(original_words * 0.75)
-
-    prompt = (
-        f"Summarize this section for optimal readability and learning:\n"
-        f"- Retain at least {min_keep} words. Prioritize coherent full sentences over brevity.\n"
-        f"- Focus on educational value - keep key explanations, examples, and structure.\n"
-        f"- Output readable paragraphs, not bullet fragments.\n\n"
-        f"Section:\n{section}"
+try:
+    response = await client.chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=20,
+        temperature=0.0
     )
+    table = response.choices[0].message.content.strip().lower()
 
-    try:
-        response = await client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
-            temperature=0.5
-        )
-        result = response.choices[0].message.content.strip()
-        logger.info(f"Summarized {original_words} to {len(result.split())} words")
-        return result
+    # Strip any extra words the model might add
+    table = table.split()[0] if table.split() else "master_strategy"
 
-    except Exception as e:
-        logger.error(f"Summarize failed: {e}")
-        raise ValueError(f"Summarize failed: {str(e)}")
+    if table not in SPECIALIST_TABLES:
+        logger.warning(f"Classifier returned unknown table '{table}' - falling back to master_strategy")
+        return "master_strategy"
 
-async def adjust_summary_length(summary: str, current_count: int) -> str:
-    if current_count < 500:
-        direction = (
-            "Expand to at least 500 words while maintaining learnability. "
-            "Add explanatory details, examples, or context where helpful."
-        )
-    else:
-        direction = (
-            "Condense to a maximum of 1000 words. "
-            "Remove redundancies but preserve all key learning content."
-        )
+    return table
 
-    prompt = f"{direction}\n\nSummary:\n{summary}"
-
-    try:
-        response = await client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
-            temperature=0.5
-        )
-        result = response.choices[0].message.content.strip()
-        logger.info(f"Adjusted {current_count} to {len(result.split())} words")
-        return result
-
-    except Exception as e:
-        logger.error(f"Length adjustment failed: {e}")
-        raise ValueError(f"Length adjust failed: {str(e)}")
-
-async def classify_section(summary: str) -> str:
-    tables_list = ", ".join(SPECIALIST_TABLES)
-
-    prompt = (
-        f"Classify this summary into exactly ONE of these Supabase tables:\n"
-        f"{tables_list}\n\n"
-        f"Rules:\n"
-        f"- Return ONLY the table name, nothing else\n"
-        f"- Pick the single best fit (e.g. SEO content -> seo)\n"
-        f"- Default to master_strategy if genuinely unclear\n\n"
-        f"Summary (first 1000 chars):\n{summary[:1000]}"
-    )
-
-    try:
-        response = await client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=50,
-            temperature=0.0
-        )
-        table = response.choices[0].message.content.strip().lower()
-
-        if table not in SPECIALIST_TABLES:
-            logger.warning(f"Classifier returned unknown table '{table}' - falling back to master_strategy")
-            return "master_strategy"
-
-        return table
-
-    except Exception as e:
-        logger.error(f"Classification failed: {e}")
-        raise ValueError(f"Classify failed: {str(e)}")
+except Exception as e:
+    logger.error(f"Classification failed: {e}")
+    raise ValueError(f"Classify failed: {str(e)}")
+```
