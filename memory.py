@@ -5,7 +5,6 @@ import logging
 import asyncio
 from typing import List, Dict, Any, Optional
 from supabase import create_client, Client
-from supabase.lib.client_options import ClientOptions  # Fix: Necessary for v2.x options
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,9 +19,6 @@ def get_supabase_client() -> Client:
     """
     Get or create Supabase client singleton configured for the 
     'supabase_functions' schema.
-
-    Raises:
-        RuntimeError: If SUPABASE_URL or SUPABASE_KEY are not set
     """
     global _client
 
@@ -37,17 +33,17 @@ def get_supabase_client() -> Client:
             )
 
         try:
-            # Fix: Wrap the schema dict in a ClientOptions object
-            # This prevents the 'dict' object has no attribute 'headers' error
-            opts = ClientOptions(schema="supabase_functions")
-            
+            # FIX: Use a dictionary for options. 
+            # This avoids the 'ClientOptions has no attribute storage' error 
+            # by letting the SDK merge your schema with its internal defaults.
             _client = create_client(
                 url, 
                 key, 
-                options=opts
+                options={"schema": "supabase_functions"}
             )
             logger.info("Supabase client initialized with schema: supabase_functions")
         except Exception as e:
+            # This catches the 'ClientOptions' attribute error
             raise RuntimeError(f"Supabase client initialization failed: {e}")
 
     return _client
@@ -60,19 +56,6 @@ async def insert_packages_to_supabase(
 ) -> Dict[str, Any]:
     """
     Insert embedded packages into their respective Supabase specialist tables.
-
-    Each package must have:
-        - content:    str   — summarized text
-        - embedding:  list  — 768d vector from embedder.py (can be None)
-        - table:      str   — target specialist table name
-        - word_count: int   — word count of content
-
-    Args:
-        packages:   List of package dicts from embedder.py
-        source_url: The URL this content was scraped from
-
-    Returns:
-        Dict with inserted_count, skipped_count, failed_count, and details
     """
     if not packages:
         logger.warning("insert_packages called with empty package list")
@@ -98,43 +81,21 @@ async def insert_packages_to_supabase(
         embedding = package.get("embedding")
         word_count = package.get("word_count", 0)
 
-        # Skip packages with no embedding — not searchable
-        if embedding is None:
-            logger.warning(f"Package {i} has no embedding — skipping insert")
+        if embedding is None or not content.strip():
             skipped_count += 1
-            details.append({
-                "index": i,
-                "table": table,
-                "status": "skipped",
-                "reason": "no embedding"
-            })
+            details.append({"index": i, "status": "skipped", "reason": "missing data"})
             continue
 
-        # Skip packages with no content
-        if not content.strip():
-            logger.warning(f"Package {i} has empty content — skipping insert")
-            skipped_count += 1
-            details.append({
-                "index": i,
-                "table": table,
-                "status": "skipped",
-                "reason": "empty content"
-            })
-            continue
-
-        # Build the full row matching the Supabase schema
         row = {
             "content": content,
             "embedding": embedding,
             "source_url": source_url,
             "chunk_index": i,
             "word_count": word_count,
-            # inserted_at is handled by Supabase default (now())
-            # title is optional — can be added by orchestrator if available
         }
 
         try:
-            # Run sync Supabase call in thread pool to stay async-safe
+            # Stay async-safe for sync SDK calls
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None,
@@ -143,35 +104,14 @@ async def insert_packages_to_supabase(
 
             if response.data:
                 inserted_count += word_count
-                logger.info(
-                    f"Package {i + 1}/{len(packages)} inserted → "
-                    f"table: {table}, words: {word_count}"
-                )
-                details.append({
-                    "index": i,
-                    "table": table,
-                    "status": "inserted",
-                    "word_count": word_count
-                })
+                details.append({"index": i, "table": table, "status": "inserted"})
             else:
-                raise ValueError(f"Insert returned no data for package {i}")
+                raise ValueError("No data returned from insert")
 
         except Exception as e:
             failed_count += 1
-            logger.error(f"Insert failed for package {i} → table: {table} | Error: {e}")
-            details.append({
-                "index": i,
-                "table": table,
-                "status": "failed",
-                "error": str(e)
-            })
-
-    logger.info(
-        f"Insert complete — "
-        f"inserted: {inserted_count} words, "
-        f"skipped: {skipped_count}, "
-        f"failed: {failed_count}"
-    )
+            logger.error(f"Insert failed for package {i}: {e}")
+            details.append({"index": i, "status": "failed", "error": str(e)})
 
     return {
         "inserted_count": inserted_count,
