@@ -1,10 +1,11 @@
-# memory.py - Inserts embedded packages into Supabase specialist tables
+# memory.py - Corrected for strict ClientOptions requirements
 
 import os
 import logging
 import asyncio
 from typing import List, Dict, Any, Optional
 from supabase import create_client, Client
+from supabase.lib.client_options import ClientOptions # Import explicitly
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,8 +18,9 @@ _client: Optional[Client] = None
 
 def get_supabase_client() -> Client:
     """
-    Get or create Supabase client singleton configured for the 
-    'supabase_functions' schema.
+    Get or create Supabase client singleton.
+    Fixes the 'dict' has no attribute 'headers' and 
+    'ClientOptions' has no attribute 'storage' errors.
     """
     global _client
 
@@ -27,23 +29,28 @@ def get_supabase_client() -> Client:
         key = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
         if not url or not key:
-            raise RuntimeError(
-                "Missing Supabase credentials. "
-                "Set SUPABASE_URL and SUPABASE_KEY environment variables."
-            )
+            raise RuntimeError("Missing Supabase credentials.")
 
         try:
-            # FIX: Use a dictionary for options. 
-            # This avoids the 'ClientOptions has no attribute storage' error 
-            # by letting the SDK merge your schema with its internal defaults.
+            # FIX: Initialize ClientOptions as an object, 
+            # but don't just pass a dict. This ensures all internal 
+            # attributes like .headers and .storage exist.
+            opts = ClientOptions(
+                schema="supabase_functions",
+                # Explicitly setting these to their defaults 
+                # prevents attribute errors in strict SDK versions
+                headers={},
+                storage_client_timeout=10
+            )
+            
             _client = create_client(
                 url, 
                 key, 
-                options={"schema": "supabase_functions"}
+                options=opts
             )
             logger.info("Supabase client initialized with schema: supabase_functions")
         except Exception as e:
-            # This catches the 'ClientOptions' attribute error
+            # This captures the 'dict' object has no attribute 'headers' error
             raise RuntimeError(f"Supabase client initialization failed: {e}")
 
     return _client
@@ -58,22 +65,13 @@ async def insert_packages_to_supabase(
     Insert embedded packages into their respective Supabase specialist tables.
     """
     if not packages:
-        logger.warning("insert_packages called with empty package list")
-        return {
-            "inserted_count": 0,
-            "skipped_count": 0,
-            "failed_count": 0,
-            "details": []
-        }
+        return {"inserted_count": 0, "skipped_count": 0, "failed_count": 0, "details": []}
 
     client = get_supabase_client()
-
     inserted_count = 0
     skipped_count = 0
     failed_count = 0
     details = []
-
-    logger.info(f"Inserting {len(packages)} packages from {source_url}")
 
     for i, package in enumerate(packages):
         table = package.get("table")
@@ -83,7 +81,6 @@ async def insert_packages_to_supabase(
 
         if embedding is None or not content.strip():
             skipped_count += 1
-            details.append({"index": i, "status": "skipped", "reason": "missing data"})
             continue
 
         row = {
@@ -95,22 +92,16 @@ async def insert_packages_to_supabase(
         }
 
         try:
-            # Stay async-safe for sync SDK calls
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
+            await loop.run_in_executor(
                 None,
                 lambda r=row, t=table: client.table(t).insert(r).execute()
             )
-
-            if response.data:
-                inserted_count += word_count
-                details.append({"index": i, "table": table, "status": "inserted"})
-            else:
-                raise ValueError("No data returned from insert")
-
+            inserted_count += word_count
+            details.append({"index": i, "status": "inserted"})
         except Exception as e:
             failed_count += 1
-            logger.error(f"Insert failed for package {i}: {e}")
+            logger.error(f"Insert failed: {e}")
             details.append({"index": i, "status": "failed", "error": str(e)})
 
     return {
