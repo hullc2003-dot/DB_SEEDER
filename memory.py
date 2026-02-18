@@ -1,9 +1,10 @@
-# memory.py - Fixed: use dict-based options to avoid ClientOptions shape issues
+# memory.py - Fixed: use attribute-compatible ClientOptions shim for supabase 2.28.0
 
 import os
 import logging
 import asyncio
 from typing import List, Dict, Any, Optional, Sequence
+from types import SimpleNamespace
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -33,10 +34,44 @@ _ALLOWED_TABLES: Sequence[str] = (
 
 _client: Optional[Client] = None
 
+class _CompatClientOptions:
+    """
+    Small compatibility shim that provides attribute-style access to keys
+    the supabase client expects. Also implements dict-like getitem for safety.
+    """
+    def __init__(
+        self,
+        schema: str = "public",
+        headers: Optional[Dict[str, str]] = None,
+        storage: Optional[Any] = None,
+        storage_client_timeout: int = 10,
+        realtime: Optional[Dict[str, Any]] = None,
+    ):
+        self.schema = schema
+        self.headers = headers or {}
+        # storage: supply a SimpleNamespace so attributes like .headers work
+        if storage is None:
+            self.storage = SimpleNamespace(headers={}, url=None, timeout=storage_client_timeout)
+        else:
+            # if user passed a dict, convert to SimpleNamespace for attribute access
+            if isinstance(storage, dict):
+                self.storage = SimpleNamespace(**storage)
+            else:
+                self.storage = storage
+        self.storage_client_timeout = storage_client_timeout
+        self.realtime = realtime or {}
+
+    # optional dict-like access (some code may do options["schema"])
+    def __getitem__(self, key):
+        return getattr(self, key)
+
+    def get(self, key, default=None):
+        return getattr(self, key, default)
+
 def get_supabase_client(schema: str = "supabase_functions") -> Client:
     """
-    Return a singleton Supabase client. Use a dict for 'options' to remain
-    compatible across supabase-py versions and avoid missing-attribute errors.
+    Return a singleton Supabase client. Use an attribute-compatible options shim
+    because some supabase-py versions expect attribute access (options.storage.headers).
     """
     global _client
     if _client is None:
@@ -46,21 +81,14 @@ def get_supabase_client(schema: str = "supabase_functions") -> Client:
             raise RuntimeError("Missing Supabase credentials (SUPABASE_URL / SUPABASE_KEY).")
 
         try:
-            # Robust dict-based options that include a minimal 'storage' shape.
-            # This prevents "'ClientOptions' object has no attribute 'storage'" errors.
-            opts = {
-                "schema": schema,
-                "headers": {},
-                # Provide a minimal storage shape the client may expect
-                "storage": {
-                    "headers": {},
-                    "url": None,
-                    "timeout": 10,
-                },
-                "storage_client_timeout": 10,
-                # Provide realtime placeholder if client inspects it
-                "realtime": {},
-            }
+            # Use the compatibility object so SDK code can access attributes.
+            opts = _CompatClientOptions(
+                schema=schema,
+                headers={},
+                storage={"headers": {}, "url": None, "timeout": 10},
+                storage_client_timeout=10,
+                realtime={},
+            )
 
             _client = create_client(url, key, options=opts)
             logger.info("Supabase client initialized with schema: %s", schema)
