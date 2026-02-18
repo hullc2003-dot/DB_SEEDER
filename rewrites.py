@@ -27,7 +27,7 @@ if not GROQ_API_KEY:
 
 client = AsyncOpenAI(
     api_key=GROQ_API_KEY,
-    base_url="https://openrouter.ai/api/v1"
+    base_url="https://api.groq.com/openai/v1"
 )
 
 def chunk_text(text: str) -> list:
