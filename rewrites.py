@@ -71,7 +71,7 @@ async def generate_title(text: str) -> str:
     prompt = (
         "Generate a concise, specific title for this content.\n"
         "Rules:\n"
-        "- Maximum 8 words\n"
+        "- Maximum 6 words\n"
         "- No quotes or punctuation at the end\n"
         "- Be specific to the actual topic, not generic\n"
         "- Return ONLY the title, nothing else\n\n"
@@ -81,8 +81,8 @@ async def generate_title(text: str) -> str:
         response = await client.chat.completions.create(
             model=MODEL,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=25,
-            temperature=0.3
+            max_tokens=40,
+            temperature=0.2
         )
         return response.choices[0].message.content.strip().strip('"').strip("'")
     except Exception as e:
