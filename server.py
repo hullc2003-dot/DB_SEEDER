@@ -24,7 +24,7 @@ sys.path.append(BASE_DIR)
 
 logging.basicConfig(
 level=logging.INFO,
-format=”%(asctime)s [%(name)s] %(levelname)s: %(message)s”
+format="%(asctime)s [%(name)s] %(levelname)s: %(message)s"
 )
 logger = logging.getLogger(“RenderServer”)
 
@@ -34,11 +34,11 @@ brain = BrainState()
 
 # — FASTAPI APP —
 
-app = FastAPI(title=“AI Brain API — Seeding Pipeline”)
+app = FastAPI(title="AI Brain API — Seeding Pipeline")
 
 app.add_middleware(
 CORSMiddleware,
-allow_origins=[os.getenv(“ALLOWED_ORIGIN”, “*”)],  # Lock this down in production
+allow_origins=[os.getenv("ALLOWED_ORIGIN”, "*")],  # Lock this down in production
 allow_methods=[”*”],
 allow_headers=[”*”],
 )
