@@ -71,7 +71,7 @@ async def generate_title(text: str) -> str:
     prompt = (
         "Generate a concise, specific title for this content.\n"
         "Rules:\n"
-        "- Maximum 6 words\n"
+        "- Maximum 4 words\n"
         "- No quotes or punctuation at the end\n"
         "- Be specific to the actual topic, not generic\n"
         "- Return ONLY the title, nothing else\n\n"
@@ -112,10 +112,10 @@ async def process_text_into_packages(text: str) -> tuple:
             word_count = len(chunk.split())
 
             suggested_table = await classify_section(chunk)
-            await asyncio.sleep(25.0)
+            await asyncio.sleep(5.0)
 
             title = await generate_title(chunk)
-            await asyncio.sleep(15.0)
+            await asyncio.sleep(5.0)
 
             package = {
                 "title": title,
