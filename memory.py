@@ -95,7 +95,7 @@ async def insert_packages_to_supabase(
     "word_count": word_count,
 }
 
-        }
+        
 
         try:
             # run synchronous client call in threadpool to avoid blocking event loop
