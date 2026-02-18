@@ -13,7 +13,7 @@ logger = logging.getLogger("Crawler")
 
 # — CONFIGURATION —
 
-MAX_PAGES = 25          # Hard cap — prevents runaway crawls on large sites
+MAX_PAGES = 15          # Hard cap — prevents runaway crawls on large sites
 REQUEST_TIMEOUT = 10     # Seconds per request
 CRAWL_DELAY = 2.0        # Seconds between requests — be polite to servers
 MAX_DEPTH = 1            # How many links deep to follow from seed URL
