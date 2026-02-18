@@ -39,8 +39,7 @@ class _CompatClientOptions:
     """
     Compatibility shim for supabase-py ClientOptions.
     Provides attribute-style access for fields the SDK expects and minimal
-    dict-like access for safety.
-    Extend this class if a new missing attribute appears in the traceback.
+    dict-like access for safety. Add attributes here if the SDK complains.
     """
     def __init__(
         self,
@@ -53,18 +52,18 @@ class _CompatClientOptions:
         persist_session: bool = True,
         local_storage: Optional[Any] = None,
         headers_auth: Optional[Dict[str, str]] = None,
-        # include any other defaults you expect the SDK to access
+        flow_type: Optional[str] = "pkce",  # often expected by auth flows
+        # add more defaults here if new attributes appear in tracebacks
     ):
-        # basic options
+        # Basic options
         self.schema = schema
         self.headers = headers or {}
 
-        # storage is often accessed with attribute-style .headers, .url, .timeout
+        # Storage: SDK may access storage.headers, storage.url, storage.timeout
         if storage is None:
             self.storage = SimpleNamespace(headers={}, url=None, timeout=storage_client_timeout)
         else:
             if isinstance(storage, dict):
-                # convert dict to SimpleNamespace so attribute access works
                 self.storage = SimpleNamespace(**storage)
             else:
                 self.storage = storage
@@ -72,23 +71,26 @@ class _CompatClientOptions:
         self.storage_client_timeout = storage_client_timeout
         self.realtime = realtime or {}
 
-        # session and auth related options commonly used by supabase-py
+        # Auth/session options
         self.auto_refresh_token = auto_refresh_token
         self.persist_session = persist_session
+        self.flow_type = flow_type
 
+        # Minimal local_storage shim (get/set)
         if local_storage is None:
-            # minimal local_storage shim: get(key, default) and set(key, value)
             self.local_storage = SimpleNamespace(
                 get=lambda k, default=None: default,
-                set=lambda k, v: None
+                set=lambda k, v: None,
+                remove=lambda k: None
             )
         else:
             self.local_storage = local_storage
 
-        # sometimes code expects a differently named headers dict
+        # occasionally SDK code references alternative header names
         self.headers_auth = headers_auth or {}
 
-    # Provide mapping-like access in case some code uses options["schema"]
+        # Allow arbitrary additional attributes to be attached later if needed
+        # e.g., instance.extra_props = {}
     def __getitem__(self, key):
         return getattr(self, key)
 
@@ -117,12 +119,13 @@ def get_supabase_client(schema: str = "supabase_functions") -> Client:
                 realtime={},
                 auto_refresh_token=True,
                 persist_session=True,
+                flow_type="pkce",
             )
 
             _client = create_client(url, key, options=opts)
             logger.info("Supabase client initialized with schema: %s", schema)
         except Exception as e:
-            # keep the original traceback available by chaining
+            # Keep original traceback chained for easier debugging
             raise RuntimeError(f"Supabase client initialization failed: {e}") from e
 
     return _client
@@ -219,7 +222,6 @@ async def insert_packages_to_supabase(
 
 # Optional: quick local debug when run directly
 if __name__ == "__main__":
-    # TEMP DEBUG: verify client initialization locally
     try:
         client = get_supabase_client()
         print("Supabase client initialized:", type(client))
