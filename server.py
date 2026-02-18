@@ -93,11 +93,40 @@ async def wake_up():
 @app.post("/chat")
 async def chat(req: ChatRequest):
     """
-    Primary messaging interface.
-    Conversational agent side — placeholder until agent is wired in.
+    Chat endpoint.
+    If user input is a URL → trigger learning pipeline.
+    Otherwise → normal conversational response.
     """
+
+    text = req.input.strip()
+
     try:
-        return {"output": f"Echo: {req.input}. (Agent not yet wired)"}
+        # Detect URL
+        if text.startswith("http://") or text.startswith("https://"):
+
+            logger.info(f"URL detected in chat. Triggering learning for: {text}")
+
+            orchestrator = SeedingOrchestrator(brain=brain)
+            report = await orchestrator.run(seed_url=text)
+
+            if report["status"] == "failed":
+                return {
+                    "output": f"Learning pipeline failed.\nErrors: {report['errors']}"
+                }
+
+            return {
+                "output": (
+                    f"Learning complete ✅\n\n"
+                    f"Seed: {report['seed_url']}\n"
+                    f"Discovered: {report['urls_discovered']}\n"
+                    f"Processed: {report['urls_processed']}\n"
+                    f"Words Inserted: {report['total_inserted']}\n"
+                )
+            }
+
+        # Otherwise normal chat behavior
+        return {"output": f"Echo: {text}"}
+
     except Exception as e:
         logger.error(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
