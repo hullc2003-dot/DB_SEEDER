@@ -1,26 +1,25 @@
 from typing import Optional
 import os
-from supabase import create_client
+from supabase import create_client, ClientOptions
 from dotenv import load_dotenv
 
-load_dotenv()  # loads .env into environment for local dev
+load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")  # use anon key in client-side, service role for server tasks
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set in env")
 
-# create a single shared client for your app
-_supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+_supabase_client = create_client(
+    SUPABASE_URL,
+    SUPABASE_KEY,
+    options=ClientOptions(schema="supabase_functions")
+)
 
 def get_supabase_client():
-    """
-    Return the shared Supabase client. Import this function from other modules.
-    """
     return _supabase_client
 
-# Convenience accessors
 def get_db():
     return _supabase_client.from_
 
