@@ -27,7 +27,11 @@ if not GEMINI_API_KEY:
     )
 
 # Initialize the new GenAI Client
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = genai.Client(
+    api_key=GEMINI_API_KEY,
+    http_options={"api_version": "v1"}
+)
+
 
 async def embed_text(text: str) -> List[float]:
     """
