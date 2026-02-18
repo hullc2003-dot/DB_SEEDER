@@ -17,7 +17,7 @@ logger = logging.getLogger("Rewrites")
 # — OPENROUTER CONFIGURATION —
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-MODEL = "meta-llama/llama-3-70b-instruct"
+MODEL = "google/gemma-3n-e2b-it:free"
 
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 50
