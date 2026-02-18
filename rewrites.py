@@ -4,7 +4,7 @@ import os
 import re
 import asyncio
 import logging
-import anthropic
+from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from config import SPECIALIST_TABLES
 
@@ -12,23 +12,23 @@ load_dotenv()
 
 logger = logging.getLogger("Rewrites")
 
-# — ANTHROPIC CONFIGURATION —
+# — OPENROUTER CONFIGURATION —
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-MODEL = "claude-haiku-4-5-20251001"  # Fast and cheap for bulk summarization
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+MODEL = "meta-llama/llama-3-70b-instruct"
 
-if not ANTHROPIC_API_KEY:
+if not OPENROUTER_API_KEY:
     raise RuntimeError(
-        "ANTHROPIC_API_KEY environment variable not set. "
-        "Get your key from https://console.anthropic.com"
+        "OPENROUTER_API_KEY environment variable not set. "
+        "Get your key from https://openrouter.ai/keys"
     )
 
-client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+client = AsyncOpenAI(
+    api_key=OPENROUTER_API_KEY,
+    base_url="https://openrouter.ai/api/v1"
+)
 
 async def process_text_into_packages(text: str) -> tuple:
-    """
-    Main pipeline function: split, summarize, adjust, and classify scraped text.
-    """
     if not text.strip():
         logger.warning("process_text_into_packages called with empty text")
         return [], 0
@@ -72,9 +72,9 @@ async def process_text_into_packages(text: str) -> tuple:
             packages.append(package)
             total_words += word_count
 
-            logger.info(f"Section {i + 1} complete — words: {word_count}, table: {suggested_table}")
+            logger.info(f"Section {i + 1} complete - words: {word_count}, table: {suggested_table}")
 
-        logger.info(f"All sections processed — {len(packages)} packages, {total_words} total words")
+        logger.info(f"All sections processed - {len(packages)} packages, {total_words} total words")
         return packages, total_words
 
     except Exception as e:
@@ -88,18 +88,19 @@ async def summarize_section(section: str) -> str:
     prompt = (
         f"Summarize this section for optimal readability and learning:\n"
         f"- Retain at least {min_keep} words. Prioritize coherent full sentences over brevity.\n"
-        f"- Focus on educational value — keep key explanations, examples, and structure.\n"
+        f"- Focus on educational value - keep key explanations, examples, and structure.\n"
         f"- Output readable paragraphs, not bullet fragments.\n\n"
         f"Section:\n{section}"
     )
 
     try:
-        response = await client.messages.create(
+        response = await client.chat.completions.create(
             model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
             max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}]
+            temperature=0.5
         )
-        result = response.content[0].text.strip()
+        result = response.choices[0].message.content.strip()
         logger.info(f"Summarized {original_words} to {len(result.split())} words")
         return result
 
@@ -122,12 +123,13 @@ async def adjust_summary_length(summary: str, current_count: int) -> str:
     prompt = f"{direction}\n\nSummary:\n{summary}"
 
     try:
-        response = await client.messages.create(
+        response = await client.chat.completions.create(
             model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
             max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}]
+            temperature=0.5
         )
-        result = response.content[0].text.strip()
+        result = response.choices[0].message.content.strip()
         logger.info(f"Adjusted {current_count} to {len(result.split())} words")
         return result
 
@@ -149,15 +151,16 @@ async def classify_section(summary: str) -> str:
     )
 
     try:
-        response = await client.messages.create(
+        response = await client.chat.completions.create(
             model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
             max_tokens=50,
-            messages=[{"role": "user", "content": prompt}]
+            temperature=0.0
         )
-        table = response.content[0].text.strip().lower()
+        table = response.choices[0].message.content.strip().lower()
 
         if table not in SPECIALIST_TABLES:
-            logger.warning(f"Classifier returned unknown table '{table}' — falling back to master_strategy")
+            logger.warning(f"Classifier returned unknown table '{table}' - falling back to master_strategy")
             return "master_strategy"
 
         return table
