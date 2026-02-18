@@ -1,6 +1,6 @@
 requests
 beautifulsoup4
-supabase==2.7.4
+supabase
 openai
 python-dotenv
 fastapi
