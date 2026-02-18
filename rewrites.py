@@ -22,11 +22,11 @@ MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 50
 
-if not OPENROUTER_API_KEY:
-    raise RuntimeError("OPENROUTER_API_KEY environment variable not set.")
+if not GROQ_API_KEY:
+    raise RuntimeError("GROQ_API_KEY environment variable not set.")
 
 client = AsyncOpenAI(
-    api_key=OPENROUTER_API_KEY,
+    api_key=GROQ_API_KEY,
     base_url="https://openrouter.ai/api/v1"
 )
 
